@@ -19,6 +19,21 @@
         </div>
       </header>
 
+      <section class="auth-card glass">
+        <div>
+          <p class="eyebrow">Account Sync</p>
+          <h2 id="authTitle">登入後跨裝置同步</h2>
+          <p id="syncStatus">目前使用本機儲存。登入後會把完成狀態、反思和讀書紀錄保存到雲端。</p>
+        </div>
+        <form id="authForm" class="auth-form">
+          <input id="authEmail" type="email" autocomplete="email" placeholder="Email" required />
+          <input id="authPassword" type="password" autocomplete="current-password" placeholder="Password" required />
+          <button id="signInButton" type="submit">登入</button>
+          <button id="signUpButton" type="button">註冊</button>
+        </form>
+        <button id="signOutButton" class="hidden" type="button">登出</button>
+      </section>
+
       <section class="overview">
         <article class="metric glass">
           <span>今日檢核</span>
@@ -102,6 +117,8 @@
       </article>
     </template>
 
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="supabase-config.js"></script>
     <script src="app.js"></script>
   </body>
 </html>

@@ -6,6 +6,17 @@ let selectedSubject = "全部";
 let timerSeconds = 50 * 60;
 let timerRemaining = timerSeconds;
 let timerId = null;
+let currentUser = null;
+let cloudReady = false;
+
+const config = window.GSAT_SUPABASE || {};
+const hasSupabaseConfig =
+  window.supabase &&
+  config.url &&
+  config.anonKey &&
+  !config.url.includes("YOUR_PROJECT_REF") &&
+  !config.anonKey.includes("YOUR_SUPABASE_ANON_KEY");
+const supabaseClient = hasSupabaseConfig ? window.supabase.createClient(config.url, config.anonKey) : null;
 
 const saved = JSON.parse(localStorage.getItem(stateKey) || "{}");
 const appState = {
@@ -34,6 +45,14 @@ const els = {
   taskCount: document.querySelector("#taskCount"),
   taskList: document.querySelector("#taskList"),
   template: document.querySelector("#taskTemplate"),
+  authTitle: document.querySelector("#authTitle"),
+  syncStatus: document.querySelector("#syncStatus"),
+  authForm: document.querySelector("#authForm"),
+  authEmail: document.querySelector("#authEmail"),
+  authPassword: document.querySelector("#authPassword"),
+  signInButton: document.querySelector("#signInButton"),
+  signUpButton: document.querySelector("#signUpButton"),
+  signOutButton: document.querySelector("#signOutButton"),
 };
 
 function saveState() {
@@ -90,6 +109,111 @@ function filteredTasks() {
     const searchable = `${task.subject} ${task.category} ${task.task_title} ${task.page_range} ${task.details} ${task.note_url}`.toLowerCase();
     return rangeMatch && subjectMatch && (!query || searchable.includes(query));
   });
+}
+
+function setSyncStatus(message) {
+  els.syncStatus.textContent = message;
+}
+
+function renderAuth() {
+  if (!hasSupabaseConfig) {
+    els.authTitle.textContent = "尚未連接 Supabase";
+    setSyncStatus("填入 supabase-config.js 的 url 和 anonKey 後，登入與跨裝置同步就會啟用。");
+    return;
+  }
+
+  if (currentUser) {
+    els.authTitle.textContent = currentUser.email;
+    setSyncStatus(cloudReady ? "已連線到雲端資料庫，變更會自動同步。" : "正在同步雲端資料...");
+    els.authForm.classList.add("hidden");
+    els.signOutButton.classList.remove("hidden");
+    return;
+  }
+
+  els.authTitle.textContent = "登入後跨裝置同步";
+  setSyncStatus("目前使用本機儲存。登入後會同步完成狀態、反思和讀書紀錄。");
+  els.authForm.classList.remove("hidden");
+  els.signOutButton.classList.add("hidden");
+}
+
+async function loadCloudState() {
+  if (!supabaseClient || !currentUser) return;
+  cloudReady = false;
+  renderAuth();
+
+  const [{ data: progress, error: progressError }, { data: sessions, error: sessionsError }] = await Promise.all([
+    supabaseClient.from("task_progress").select("task_id, completed, reflection").eq("user_id", currentUser.id),
+    supabaseClient
+      .from("study_sessions")
+      .select("id, logged_at, minutes")
+      .eq("user_id", currentUser.id)
+      .order("logged_at", { ascending: false })
+      .limit(20),
+  ]);
+
+  if (progressError || sessionsError) {
+    setSyncStatus(progressError?.message || sessionsError?.message || "雲端同步失敗。");
+    return;
+  }
+
+  appState.completed = {};
+  appState.reflections = {};
+  progress.forEach((item) => {
+    if (item.completed) appState.completed[item.task_id] = true;
+    if (item.reflection) appState.reflections[item.task_id] = item.reflection;
+  });
+  appState.sessions = sessions.map((item) => ({
+    id: item.id,
+    date: new Intl.DateTimeFormat("zh-TW", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(item.logged_at)),
+    minutes: item.minutes,
+  }));
+
+  cloudReady = true;
+  saveState();
+  render();
+}
+
+async function syncLocalStateToCloud() {
+  if (!supabaseClient || !currentUser) return;
+  const rows = new Map();
+  Object.entries(appState.completed).forEach(([taskId, completed]) => {
+    rows.set(Number(taskId), { user_id: currentUser.id, task_id: Number(taskId), completed: Boolean(completed), reflection: "" });
+  });
+  Object.entries(appState.reflections).forEach(([taskId, reflection]) => {
+    const row = rows.get(Number(taskId)) || { user_id: currentUser.id, task_id: Number(taskId), completed: false };
+    row.reflection = reflection;
+    rows.set(Number(taskId), row);
+  });
+
+  if (rows.size) {
+    await supabaseClient.from("task_progress").upsert([...rows.values()], { onConflict: "user_id,task_id" });
+  }
+}
+
+async function saveTaskProgress(taskId) {
+  saveState();
+  if (!supabaseClient || !currentUser || !cloudReady) return;
+  const reflection = appState.reflections[taskId] || "";
+  const completed = Boolean(appState.completed[taskId]);
+  const { error } = await supabaseClient.from("task_progress").upsert(
+    {
+      user_id: currentUser.id,
+      task_id: Number(taskId),
+      completed,
+      reflection,
+    },
+    { onConflict: "user_id,task_id" }
+  );
+  if (error) setSyncStatus(error.message);
+}
+
+async function saveStudySession(minutes) {
+  if (!supabaseClient || !currentUser || !cloudReady) return;
+  const { error } = await supabaseClient.from("study_sessions").insert({
+    user_id: currentUser.id,
+    minutes,
+  });
+  if (error) setSyncStatus(error.message);
 }
 
 function renderCountdown() {
@@ -185,14 +309,14 @@ function renderTasks() {
     checkbox.addEventListener("change", () => {
       appState.completed[task.task_id] = checkbox.checked;
       if (!checkbox.checked) delete appState.completed[task.task_id];
-      saveState();
+      saveTaskProgress(task.task_id);
       render();
     });
 
-    reflection.addEventListener("input", () => {
+    reflection.addEventListener("change", () => {
       appState.reflections[task.task_id] = reflection.value;
       if (!reflection.value.trim()) delete appState.reflections[task.task_id];
-      saveState();
+      saveTaskProgress(task.task_id);
     });
 
     fragment.appendChild(node);
@@ -201,6 +325,8 @@ function renderTasks() {
 }
 
 function render() {
+  if (!payload) return;
+  renderAuth();
   renderCountdown();
   renderFilters();
   renderStats();
@@ -220,7 +346,7 @@ function renderTimer() {
   els.timerDisplay.textContent = `${minutes}:${seconds}`;
 }
 
-function finishTimer() {
+async function finishTimer() {
   clearInterval(timerId);
   timerId = null;
   const minutes = Math.round(timerSeconds / 60);
@@ -230,9 +356,49 @@ function finishTimer() {
   });
   appState.sessions = appState.sessions.slice(0, 20);
   saveState();
+  await saveStudySession(minutes);
   setTimer(els.timerMode.value);
   renderSessions();
 }
+
+els.authForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!supabaseClient) return;
+  const email = els.authEmail.value.trim();
+  const password = els.authPassword.value;
+  const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
+  if (error) {
+    setSyncStatus(error.message);
+    return;
+  }
+  currentUser = data.user;
+  await syncLocalStateToCloud();
+  await loadCloudState();
+});
+
+els.signUpButton.addEventListener("click", async () => {
+  if (!supabaseClient) return;
+  const email = els.authEmail.value.trim();
+  const password = els.authPassword.value;
+  const { data, error } = await supabaseClient.auth.signUp({ email, password });
+  if (error) {
+    setSyncStatus(error.message);
+    return;
+  }
+  currentUser = data.user;
+  setSyncStatus(data.session ? "註冊完成，已登入。" : "註冊完成，請到信箱點確認信後再登入。");
+  if (data.session) {
+    await syncLocalStateToCloud();
+    await loadCloudState();
+  }
+});
+
+els.signOutButton.addEventListener("click", async () => {
+  if (supabaseClient) await supabaseClient.auth.signOut();
+  currentUser = null;
+  cloudReady = false;
+  render();
+});
 
 els.rangeFilters.addEventListener("click", (event) => {
   const button = event.target.closest("button[data-range]");
@@ -277,11 +443,32 @@ els.resetTimer.addEventListener("click", () => {
   setTimer(els.timerMode.value);
 });
 
+async function initAuth() {
+  if (!supabaseClient) {
+    renderAuth();
+    return;
+  }
+
+  const { data } = await supabaseClient.auth.getSession();
+  currentUser = data.session?.user || null;
+  if (currentUser) await loadCloudState();
+  supabaseClient.auth.onAuthStateChange(async (_event, session) => {
+    currentUser = session?.user || null;
+    cloudReady = false;
+    if (currentUser) {
+      await loadCloudState();
+    } else {
+      render();
+    }
+  });
+}
+
 fetch("data/plan.json")
   .then((response) => response.json())
-  .then((data) => {
+  .then(async (data) => {
     payload = data;
     setTimer(els.timerMode.value);
     render();
+    await initAuth();
     setInterval(renderCountdown, 60000);
   });

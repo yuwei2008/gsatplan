@@ -111,6 +111,61 @@ h2 {
   margin-top: 14px;
 }
 
+.auth-card {
+  display: grid;
+  grid-template-columns: 1fr minmax(360px, auto) auto;
+  align-items: center;
+  gap: 14px;
+  margin-top: 14px;
+  padding: 16px;
+  border-radius: 8px;
+}
+
+.auth-card p:not(.eyebrow) {
+  color: var(--muted);
+  font-size: 0.92rem;
+  line-height: 1.5;
+}
+
+.auth-form {
+  display: grid;
+  grid-template-columns: minmax(140px, 1fr) minmax(140px, 1fr) auto auto;
+  gap: 8px;
+}
+
+.auth-form input {
+  min-height: 40px;
+  min-width: 0;
+  padding: 0 12px;
+  border: 1px solid rgba(16, 22, 36, 0.1);
+  border-radius: 8px;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.62);
+}
+
+.auth-card button {
+  min-height: 40px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 8px;
+  color: white;
+  background: rgba(23, 105, 255, 0.92);
+  font-weight: 700;
+}
+
+#signUpButton {
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.62);
+}
+
+#signOutButton {
+  background: rgba(16, 22, 36, 0.72);
+}
+
+.hidden {
+  display: none !important;
+}
+
 .metric,
 .timer,
 .controls,
@@ -462,8 +517,13 @@ dd {
 
 @media (max-width: 920px) {
   .overview,
+  .auth-card,
   .content {
     grid-template-columns: 1fr;
+  }
+
+  .auth-form {
+    grid-template-columns: 1fr 1fr;
   }
 
   .controls {
@@ -501,5 +561,9 @@ dd {
   .task-actions {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .auth-form {
+    grid-template-columns: 1fr;
   }
 }
